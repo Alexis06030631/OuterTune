@@ -6,7 +6,7 @@ const MAX_RETRIES = 3
 const history = localStorage.getItem('played')
 
 const state = () => ({
-  audio: null,
+  audio: new Audio(),
   resultsMusics: [],
   song: [],
   isPlaying: false,
@@ -15,7 +15,8 @@ const state = () => ({
   currentQueueIndex: -1,
   duration: 0,
   currentTime: 0,
-  volume: 1
+  volume: 1,
+  listeners: false
 })
 
 const getters = {
@@ -81,17 +82,27 @@ const actions = {
         this.queue = []
       }
       await this.setSong(song.id)
-      await this.getSuggestions(song)
       const result = await window.youtube.download(song.id, 'mp3')
       if (this.audio) {
         this.audio.src = result.urlDecoded
       } else {
         this.audio = new Audio(result.urlDecoded)
       }
+      this.audioListeners()
       this.audio.load()
       await this.audio.play()
+      this.updateMetadataNavigator()
+      await this.getSuggestions(song)
       this.history.unshift(song)
       this.saveHistory()
+      this.isPlaying = !this.audio.paused
+    } catch (error) {
+      await this.handleRetries(error, song, eraseQueue, retryCount)
+    }
+  },
+  audioListeners () {
+    if (this.audio && !this.listeners) {
+      this.listeners = true
       this.audio.ontimeupdate = () => {
         this.updateCurrentTime()
       }
@@ -103,9 +114,6 @@ const actions = {
         this.song = []
         this.playNext()
       }
-      this.isPlaying = !this.audio.paused
-    } catch (error) {
-      await this.handleRetries(error, song, eraseQueue, retryCount)
     }
   },
   getHistory () {
@@ -154,6 +162,31 @@ const actions = {
     if (this.currentQueueIndex > 0) {
       this.currentQueueIndex--
       this.playMusic(this.queue[this.currentQueueIndex])
+    }
+  },
+  updateMetadataNavigator () {
+    if (this.audio && navigator?.mediaSession) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: this.song.title,
+        artist: this.song.artist,
+        album: this.song.album.name,
+        artwork: [
+          { src: this.song.thumbnails.reduce((prev, current) => (prev.width < current.width) ? prev : current).url, sizes: '192x192', type: 'image/png' }
+        ]
+      })
+      const act = this
+      navigator.mediaSession.setActionHandler('play', function () {
+        act.pauseManager()
+      })
+      navigator.mediaSession.setActionHandler('pause', function () {
+        act.pauseManager()
+      })
+      navigator.mediaSession.setActionHandler('previoustrack', function () {
+        this.playPrevious()
+      })
+      navigator.mediaSession.setActionHandler('nexttrack', function () {
+        this.playNext()
+      })
     }
   }
 }
